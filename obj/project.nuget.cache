@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "dgSpecHash": "wl/DXTIKOmg=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\princ\\documents\\PasswordApiAttack\\PasswordApiAttack.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\princ\\.nuget\\packages\\newtonsoft.json\\13.0.3\\newtonsoft.json.13.0.3.nupkg.sha512"
+  ],
+  "logs": []
+}
