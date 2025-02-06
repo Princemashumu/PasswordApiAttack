@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("PasswordApiAttack")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+4829b6212229b749fd4d70eca7321b839021da74")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+fa9e4d6687325c92fcfbce860f91b8cf0bd78355")]
 [assembly: System.Reflection.AssemblyProductAttribute("PasswordApiAttack")]
 [assembly: System.Reflection.AssemblyTitleAttribute("PasswordApiAttack")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
