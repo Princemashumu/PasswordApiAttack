@@ -7,112 +7,144 @@ using System.Threading.Tasks;
 using Newtonsoft.Json;
 using System.IO.Compression;
 using System.Collections.Generic;
+using System.Linq;
+using System.Net;
 
 class Program
 {
-    private static readonly HttpClient client = new HttpClient(); // Reuse HttpClient instance
-    private const string API_URL = "http://recruitment.warpdevelopment.co.za/api/authenticate";
+    private static readonly HttpClient client;
+    private const string API_URL = "http://recruitment.warpdevelopment.co.za/api/authenticate"; // Changed back to HTTP
+    private static int attemptCount = 0;
+    private const int MAX_ATTEMPTS = 100;
+    
+    // Static constructor to configure HttpClient
+    static Program()
+    {
+        var handler = new HttpClientHandler
+        {
+            ClientCertificateOptions = ClientCertificateOption.Manual,
+            ServerCertificateCustomValidationCallback = (httpRequestMessage, cert, cetChain, policyErrors) => true
+        };
+        
+        client = new HttpClient(handler);
+        client.Timeout = TimeSpan.FromSeconds(30);
+        
+        // Print the .NET version for debugging
+        Console.WriteLine($"Running on .NET version: {Environment.Version}");
+    }
     
     static async Task Main()
     {
         try
         {
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls11 | SecurityProtocolType.Tls;
+            
             string username = "Prince";
             string dictionaryFile = "dict.txt";
             string zipFile = "submission.zip";
 
-            // Step 1: Generate dictionary file
-            await GenerateDictionaryAsync(dictionaryFile);
+            Console.WriteLine("Starting password dictionary generation...");
+            await GenerateAndShowSamplePasswords();
 
-            // Step 2: Try passwords from dictionary
-            string uploadUrl = await BruteForcePasswordAsync(username, dictionaryFile);
-            if (string.IsNullOrEmpty(uploadUrl))
+            Console.WriteLine("\nStarting authentication attempts...");
+            string? uploadUrl = await BruteForcePasswordAsync(username, dictionaryFile);
+            
+            if (uploadUrl == null)
             {
-                Console.WriteLine("Failed to authenticate.");
+                Console.WriteLine("Authentication failed after maximum attempts.");
                 return;
             }
 
-            // Step 3: Create ZIP file
+            Console.WriteLine($"Authentication successful! Upload URL: {uploadUrl}");
             await CreateZipAsync(zipFile);
-
-            // Step 4: Encode ZIP and submit
             await SubmitZipAsync(uploadUrl, zipFile);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"An error occurred: {ex.Message}");
-            throw;
+            Console.WriteLine($"Error: {ex.Message}");
+            Console.WriteLine($"Inner Exception: {ex.InnerException?.Message}");
+            Console.WriteLine($"Stack Trace: {ex.StackTrace}");
         }
     }
 
-    static async Task GenerateDictionaryAsync(string filePath)
+    static async Task GenerateAndShowSamplePasswords()
     {
-        try
+        var variations = new List<string>
         {
-            string basePassword = "password";
-            var variations = new List<string>();
-
-            void Permute(string current, int index)
-            {
-                if (index == basePassword.Length)
-                {
-                    variations.Add(current);
-                    return;
-                }
-
-                char[] options = basePassword[index] switch
-                {
-                    'a' => new[] { 'a', '@' },
-                    's' => new[] { 's', '5' },
-                    'o' => new[] { 'o', '0' },
-                    _ => new[] { basePassword[index], char.ToUpper(basePassword[index]) }
-                };
-
-                foreach (var option in options)
-                {
-                    Permute(current + option, index + 1);
-                }
-            }
-
-            Permute("", 0);
-            await File.WriteAllLinesAsync(filePath, variations);
-        }
-        catch (IOException ex)
+            "password",
+            "Password",
+            "p@ssword",
+            "P@ssword",
+            "passw0rd",
+            "Passw0rd",
+            "p@ssw0rd",
+            "P@ssw0rd",
+            "admin",
+            "Admin",
+            "admin123",
+            "Admin123",
+            "test",
+            "Test",
+            "test123",
+            "Test123"
+        };
+        
+        Console.WriteLine("Generated passwords sample:");
+        foreach (var password in variations.Take(5))
         {
-            Console.WriteLine($"Error writing dictionary file: {ex.Message}");
-            throw;
+            Console.WriteLine(password);
         }
+        
+        await File.WriteAllLinesAsync("dict.txt", variations);
+        Console.WriteLine($"Total passwords generated: {variations.Count}");
     }
 
-    static async Task<string> BruteForcePasswordAsync(string username, string dictionaryFile)
+    static async Task<string?> BruteForcePasswordAsync(string username, string dictionaryFile)
     {
         if (!File.Exists(dictionaryFile))
         {
             throw new FileNotFoundException($"Dictionary file not found: {dictionaryFile}");
         }
 
-        foreach (var password in await File.ReadAllLinesAsync(dictionaryFile))
+        var passwords = await File.ReadAllLinesAsync(dictionaryFile);
+        
+        foreach (var password in passwords)
         {
+            if (attemptCount >= MAX_ATTEMPTS)
+            {
+                Console.WriteLine("Reached maximum number of attempts.");
+                return null;
+            }
+
+            attemptCount++;
             try
             {
                 string credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}"));
+                Console.WriteLine($"Attempt {attemptCount}: Trying password: {password}");
+                
                 client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
 
                 using var response = await client.GetAsync(API_URL);
+                string responseContent = await response.Content.ReadAsStringAsync();
+                
+                Console.WriteLine($"Response Status: {response.StatusCode}");
+                Console.WriteLine($"Response Content: {responseContent}");
                 
                 if (response.IsSuccessStatusCode)
                 {
                     Console.WriteLine($"Success! Password found: {password}");
-                    return await response.Content.ReadAsStringAsync();
+                    return responseContent;
                 }
+                
+                await Task.Delay(500);
             }
             catch (HttpRequestException ex)
             {
-                Console.WriteLine($"Network error: {ex.Message}");
-                continue;
+                Console.WriteLine($"Network error on attempt {attemptCount}:");
+                Console.WriteLine($"Error Message: {ex.Message}");
+                Console.WriteLine($"Inner Exception: {ex.InnerException?.Message}");
+                await Task.Delay(1000);
             }
-
-            await Task.Delay(100); // Prevent flooding the server
         }
         
         return null;
@@ -120,70 +152,50 @@ class Program
 
     static async Task CreateZipAsync(string zipFile)
     {
-        try
+        string[] requiredFiles = { "CV.pdf", "dict.txt", "Program.cs" };
+        
+        foreach (var file in requiredFiles)
         {
-            // Check if required files exist
-            string[] requiredFiles = { "CV.pdf", "dict.txt", "Program.cs" };
-            foreach (var file in requiredFiles)
+            if (!File.Exists(file))
             {
-                if (!File.Exists(file))
-                {
-                    throw new FileNotFoundException($"Required file not found: {file}");
-                }
-            }
-
-            using var zipToCreate = new FileStream(zipFile, FileMode.Create);
-            using var archive = new ZipArchive(zipToCreate, ZipArchiveMode.Create);
-            
-            foreach (var file in requiredFiles)
-            {
-                archive.CreateEntryFromFile(file, file);
+                throw new FileNotFoundException($"Required file not found: {file}");
             }
         }
-        catch (Exception ex)
+
+        using var zipToCreate = new FileStream(zipFile, FileMode.Create);
+        using var archive = new ZipArchive(zipToCreate, ZipArchiveMode.Create);
+            
+        foreach (var file in requiredFiles)
         {
-            Console.WriteLine($"Error creating ZIP file: {ex.Message}");
-            throw;
+            archive.CreateEntryFromFile(file, file);
+            Console.WriteLine($"Added {file} to zip");
         }
     }
 
     static async Task SubmitZipAsync(string uploadUrl, string zipFile)
     {
-        try
+        if (!File.Exists(zipFile))
         {
-            if (!File.Exists(zipFile))
-            {
-                throw new FileNotFoundException($"ZIP file not found: {zipFile}");
-            }
-
-            byte[] zipBytes = await File.ReadAllBytesAsync(zipFile);
-            string base64Zip = Convert.ToBase64String(zipBytes);
-
-            var payload = new
-            {
-                Data = base64Zip,
-                Name = "Prince Ngwako",
-                Surname = "Mashumu",
-                Email = "princengwakomashumu@gmail.com"
-            };
-
-            string json = JsonConvert.SerializeObject(payload);
-            using var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-            using var response = await client.PostAsync(uploadUrl, content);
-            string responseContent = await response.Content.ReadAsStringAsync();
-            
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new HttpRequestException($"Upload failed with status code: {response.StatusCode}. Response: {responseContent}");
-            }
-            
-            Console.WriteLine($"Upload successful. Response: {responseContent}");
+            throw new FileNotFoundException($"ZIP file not found: {zipFile}");
         }
-        catch (Exception ex)
+
+        byte[] zipBytes = await File.ReadAllBytesAsync(zipFile);
+        string base64Zip = Convert.ToBase64String(zipBytes);
+
+        var payload = new
         {
-            Console.WriteLine($"Error submitting ZIP file: {ex.Message}");
-            throw;
-        }
+            Data = base64Zip,
+            Name = "Prince Ngwako",
+            Surname = "Mashumu",
+            Email = "princengwakomashumu@gmail.com"
+        };
+
+        string json = JsonConvert.SerializeObject(payload);
+        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        Console.WriteLine("Submitting ZIP file...");
+        using var response = await client.PostAsync(uploadUrl, content);
+        string responseContent = await response.Content.ReadAsStringAsync();
+        Console.WriteLine($"Submit response: {responseContent}");
     }
 }
